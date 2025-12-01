@@ -43,7 +43,6 @@ namespace gl {
         std::vector<Bone> bones_;
         std::unordered_map<std::string, unsigned int> bone_map_;
         std::vector<glm::mat4> bone_matrices_;
-        glm::mat4 global_inverse_;
     };
 
     struct SkinnedMesh {

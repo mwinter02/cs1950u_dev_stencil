@@ -34,22 +34,44 @@ namespace gl {
         return {1.0f};
     }
 
-    void constructSkeleton(Skeleton& skeleton, aiNode* curr_node, const aiScene* scene, int parent_id) {
+    void constructSkeleton(Skeleton& skeleton, aiNode* curr_node, const aiScene* scene,
+                          int parent_id, const glm::mat4& parent_global_transform) {
         aiBone* ai_bone = scene->findBone(curr_node->mName);
+        const glm::mat4 node_local = util::aiToGlmMat4(curr_node->mTransformation);
+        const glm::mat4 node_global = parent_global_transform * node_local;
+
         if (ai_bone) {
             const int current_id = (int) skeleton.bones_.size();
             const glm::mat4 offset_matrix = util::aiToGlmMat4(ai_bone->mOffsetMatrix);
-            const glm::mat4 local_transform = util::aiToGlmMat4(curr_node->mTransformation);
+
+            // The offset matrix is the INVERSE of the bind pose global transform
+            // So the bind pose global transform is the inverse of the offset matrix
+            const glm::mat4 bind_pose_global = glm::inverse(offset_matrix);
+
+            // Determine the local transform to store
+            glm::mat4 local_transform;
+            if (parent_id == -1) {
+                // Root bone: local_transform IS the bind pose global transform
+                local_transform = bind_pose_global;
+            } else {
+                // Child bone: extract local transform by dividing out parent's bind pose
+                // child_global = parent_global × child_local
+                // child_local = inverse(parent_global) × child_global
+                const glm::mat4& parent_bind_global = glm::inverse(skeleton.bones_[parent_id].offset_matrix);
+                local_transform = glm::inverse(parent_bind_global) * bind_pose_global;
+            }
 
             skeleton.addBone(curr_node->mName.C_Str(), current_id, parent_id, offset_matrix, local_transform);
 
+            // Continue to children with this bone as parent (use node_global for hierarchy traversal)
             for (size_t i = 0; i < curr_node->mNumChildren; i++) {
-                constructSkeleton(skeleton, curr_node->mChildren[i], scene, current_id);
+                constructSkeleton(skeleton, curr_node->mChildren[i], scene, current_id, node_global);
             }
         }
-        else { // Current node not a bone, continue to children
+        else {
+            // Current node not a bone, accumulate its transform but don't change parent_id
             for (size_t i = 0; i < curr_node->mNumChildren; i++) {
-                constructSkeleton(skeleton, curr_node->mChildren[i], scene, parent_id);
+                constructSkeleton(skeleton, curr_node->mChildren[i], scene, parent_id, node_global);
             }
         }
     }
@@ -68,7 +90,6 @@ namespace gl {
         auto root_transform = util::aiToGlmMat4(scene->mRootNode->mTransformation);
 
         Skeleton skeleton;
-        skeleton.global_inverse_ = glm::inverse(root_transform);
         std::unordered_set<std::string> bone_names;
 
         for (int i=0; i < scene->mNumMeshes; i++) {
@@ -87,7 +108,7 @@ namespace gl {
         }
         std::string root_name = findRootBone(scene->mRootNode, bone_names);
         auto node = scene->mRootNode->FindNode(aiString(root_name));
-        constructSkeleton(skeleton, node, scene, -1);
+        constructSkeleton(skeleton, node, scene, -1, glm::mat4(1.0f));
         return skeleton;
     }
 
@@ -104,12 +125,12 @@ namespace gl {
 
 
     void Skeleton::traverseBoneHierarchy(const unsigned int bone_id, const glm::mat4& parent_transform) {
-        const auto& bone = bones_[bone_id];
+        auto& bone = bones_[bone_id];
 
         // Accumulate transforms: parent's global transform × this bone's local transform
         const glm::mat4 global_transform = parent_transform * bone.local_transform;
 
-        // Calculate final bone matrix for shader: GlobalInverse × GlobalTransform × OffsetMatrix
+        // Calculate final bone matrix for shader
         bone_matrices_[bone_id] = global_transform * bone.offset_matrix;
 
         // Recursively update all children with this bone's global transform as their parent
