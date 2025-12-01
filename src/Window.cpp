@@ -9,9 +9,14 @@
 
 #include "render/Graphics.h"
 #include "Core.h"
+#include "imgui_internal.h"
+#include "UI.h"
+#include "backends/imgui_impl_glfw.h"
+#include "backends/imgui_impl_opengl3.h"
 
 namespace gl {}
     GLFWwindow* Window::window_ = nullptr;
+    UI* Window::ui_ = nullptr;
     Core* Window::core_ = nullptr;
 
     int Window::width_, Window::height_;
@@ -28,8 +33,13 @@ namespace gl {}
         s_title = title;
         initializeGLFW(width, height);
         initializeGLEW();
+
+        ui_ = new UI(window_);
+
         gl::Graphics::initialize();
+
         core_ = new Core();
+
 
         return 0;
     }
@@ -44,18 +54,30 @@ namespace gl {}
         s_currentTime = glfwGetTime();
         displayFrameRate();
 
-        display();
+
         const auto delta_time = static_cast<float>(s_currentTime - s_lastTime);
         core_->update(delta_time);
+        display();
+        ui_->update();
 
         glfwSwapBuffers(window_);
+
         glfwPollEvents();
         s_lastTime = s_currentTime;
     }
 
     void Window::display() {
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        // Ensure proper viewport and disable scissor test for 3D rendering
+        glViewport(0, 0, width_, height_);
+        glDisable(GL_SCISSOR_TEST);
+
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // Alpha = 1.0 for opaque background
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Reset blend state for 3D rendering
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
         core_->draw();
     }
 
@@ -64,6 +86,8 @@ namespace gl {}
             glfwDestroyWindow(window_);
         }
         delete core_;
+        delete ui_;
+        gl::Graphics::tearDown();
         glfwTerminate();
     }
 
@@ -149,7 +173,7 @@ int Window::initializeGLFW(int width, int height) {
         width_ = width;
         height_ = height;
         aspect_ratio_ = static_cast<float>(width_) / static_cast<float>(height_);
-
+        glViewport(0, 0, width_, height_);
     }
 
     void Window::keyboardCallback(GLFWwindow *window, int key, int scancode, int action, int mods) {

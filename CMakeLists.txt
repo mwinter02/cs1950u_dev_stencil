@@ -13,6 +13,7 @@ add_subdirectory(External/glfw)
 add_subdirectory(External/glm)
 add_subdirectory(External/freetype)
 add_subdirectory(External/assimp)
+add_subdirectory(External/imgui)
 
 add_library(StaticGLEW STATIC External/glew/src/glew.c)
 target_include_directories(StaticGLEW PUBLIC External/glew/include)
@@ -21,7 +22,8 @@ target_compile_definitions(StaticGLEW PUBLIC GLEW_STATIC)
 add_library(stb_image STATIC External/stb/stb_image_impl.cpp)
 target_include_directories(stb_image PUBLIC External/stb)
 
-# Main executable
+target_include_directories(imgui PUBLIC External/imgui)
+
 file(GLOB_RECURSE SOURCE_FILES src/*.cpp src/*.h)
 add_executable(${PROJECT_NAME} main.cpp ${SOURCE_FILES})
 
@@ -33,6 +35,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         freetype
         assimp::assimp
         stb_image
+        imgui
 )
 
 target_precompile_headers(${PROJECT_NAME} PRIVATE

@@ -1,4 +1,5 @@
 #pragma once
+#include "UI.h"
 #include "GLFW/glfw3.h"
 #include "glm/vec2.hpp"
 
@@ -41,6 +42,7 @@ namespace gl {}
 
 
         static Core* core_;
+        static UI* ui_;
         static GLFWwindow *window_;
         static int width_, height_;
         static float aspect_ratio_;
