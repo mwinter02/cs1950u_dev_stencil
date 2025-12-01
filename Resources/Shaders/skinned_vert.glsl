@@ -25,6 +25,8 @@ void main() {
     BoneTransform     += gBones[aBoneIDs[2]] * aWeights[2];
     BoneTransform     += gBones[aBoneIDs[3]] * aWeights[3];
 
+//    BoneTransform = mat4(1.0); // TEMPORARY DISABLE SKINNING
+
     // Transform position by bone matrix, then by model matrix
     vec4 skinnedPosition = BoneTransform * vec4(aPosition, 1.0);
     FragPos = vec3(model * skinnedPosition);
