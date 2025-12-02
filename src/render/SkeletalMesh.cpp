@@ -1,5 +1,7 @@
 #include "SkeletalMesh.h"
 
+#include <ranges>
+
 #include "Mesh.h"
 #include "../Debug.h"
 #include "../Util.h"
@@ -10,6 +12,107 @@
 
 namespace gl {
 
+    // Helper function to find the index of the keyframe just before or at the given time
+    template<typename T>
+    int findKeyframeIndex(const std::vector<Keyframe<T>>& keys, double time) {
+        for (int i = 0; i < keys.size() - 1; i++) {
+            if (time < keys[i + 1].time) {
+                return i;
+            }
+        }
+        return keys.size() - 1;
+    }
+
+    // Interpolate position (linear interpolation)
+    glm::vec3 interpolatePosition(const std::vector<PositionKey>& keys, double time) {
+        if (keys.empty()) {
+            return glm::vec3(0.0f);
+        }
+        if (keys.size() == 1) {
+            return keys[0].value;
+        }
+
+        int index = findKeyframeIndex(keys, time);
+        int next_index = index + 1;
+
+        // Clamp to last keyframe if we're past the end
+        if (next_index >= keys.size()) {
+            return keys[index].value;
+        }
+
+        const auto& key1 = keys[index];
+        const auto& key2 = keys[next_index];
+
+        double delta_time = key2.time - key1.time;
+        float factor = static_cast<float>((time - key1.time) / delta_time);
+
+        // Linear interpolation
+        return glm::mix(key1.value, key2.value, factor);
+    }
+
+    // Interpolate rotation (spherical linear interpolation for smooth rotation)
+    glm::quat interpolateRotation(const std::vector<RotationKey>& keys, double time) {
+        if (keys.empty()) {
+            return glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // Identity quaternion
+        }
+        if (keys.size() == 1) {
+            return keys[0].value;
+        }
+
+        int index = findKeyframeIndex(keys, time);
+        int next_index = index + 1;
+
+        // Clamp to last keyframe if we're past the end
+        if (next_index >= keys.size()) {
+            return keys[index].value;
+        }
+
+        const auto& key1 = keys[index];
+        const auto& key2 = keys[next_index];
+
+        double delta_time = key2.time - key1.time;
+        float factor = static_cast<float>((time - key1.time) / delta_time);
+
+        // Spherical linear interpolation (slerp) for smooth rotation
+        return glm::slerp(key1.value, key2.value, factor);
+    }
+
+    // Interpolate scale (linear interpolation)
+    glm::vec3 interpolateScale(const std::vector<ScaleKey>& keys, double time) {
+        if (keys.empty()) {
+            return glm::vec3(1.0f); // Default scale
+        }
+        if (keys.size() == 1) {
+            return keys[0].value;
+        }
+
+        int index = findKeyframeIndex(keys, time);
+        int next_index = index + 1;
+
+        // Clamp to last keyframe if we're past the end
+        if (next_index >= keys.size()) {
+            return keys[index].value;
+        }
+
+        const auto& key1 = keys[index];
+        const auto& key2 = keys[next_index];
+
+        double delta_time = key2.time - key1.time;
+        float factor = static_cast<float>((time - key1.time) / delta_time);
+
+        // Linear interpolation
+        return glm::mix(key1.value, key2.value, factor);
+    }
+
+    glm::mat4 AnimationChannel::calculateTransform(double animation_time) const {
+        const glm::vec3 position = interpolatePosition(position_keys, animation_time);
+        const glm::quat rotation = interpolateRotation(rotation_keys, animation_time);
+        const glm::vec3 scale = interpolateScale(scale_keys, animation_time);
+
+        return glm::translate(glm::mat4(1.0f), position)
+             * glm::mat4_cast(rotation)
+             * glm::scale(glm::mat4(1.0f), scale);
+    }
 
     std::string findRootBone(aiNode* curr_node, const std::unordered_set<std::string>& bone_map) {
         if (bone_map.contains(curr_node->mName.C_Str())) {
@@ -81,7 +184,7 @@ namespace gl {
                                                     aiProcess_OptimizeMeshes |
                                                     aiProcess_GenSmoothNormals |
                                                     aiProcess_CalcTangentSpace |
-                                                    aiProcess_PopulateArmatureData | // Create bone hierarchy
+                                                    // aiProcess_PopulateArmatureData | // Create bone hierarchy
                                                     aiProcess_FlipUVs | // since OpenGL's UVs are flipped
                                                     aiProcess_LimitBoneWeights; // Limit bone weights to 4 per vertex
 
@@ -155,10 +258,99 @@ namespace gl {
         }
     }
 
+    void Skeleton::setCurrentAnimation(const std::string& animation_name) {
+        if (!animations_.contains(animation_name)) {
+            debug::error("Animation " + animation_name + " not found in skeleton.");
+            return;
+        }
+        current_animation_ = &animations_.at(animation_name);
+    }
+
+    void Skeleton::playCurrentAnimation(double current_time) {
+        if (current_animation_) {
+            const double time_in_ticks = current_time * current_animation_->ticks_per_second;
+            const double animation_time = fmod(time_in_ticks, current_animation_->duration);
+            // Update each bone's local transform based on animation channels
+            for (auto& [bone_id, channel] : current_animation_->channels) {
+                bones_[bone_id].local_transform = channel.calculateTransform(animation_time);
+            }
+        }
+
+        updateBoneMatrices();
+    }
+
+    void Skeleton::resetToBindPose() {
+        for (auto& bone : bones_) {
+            bone.local_transform = bone.bind_pose_transform;
+        }
+    }
+
+    std::unordered_map<std::string, Animation> loadAnimations(const aiScene* scene, const Skeleton& skeleton) {
+        if (!scene->HasAnimations()) return {};
+        std::unordered_map<std::string,Animation> animations_map;
+        for (size_t i = 0; i < scene->mNumAnimations; i++) {
+            const aiAnimation* ai_anim = scene->mAnimations[i];
+
+
+            Animation animation;
+            animation.ticks_per_second = ai_anim->mTicksPerSecond != 0.0 ? ai_anim->mTicksPerSecond : 25.0;
+            animation.duration = ai_anim->mDuration;
+            for (size_t c = 0; c < ai_anim->mNumChannels; c++) {
+                const aiNodeAnim* ai_channel = ai_anim->mChannels[c];
+                const std::string bone_name = ai_channel->mNodeName.C_Str();
+                AnimationChannel channel;
+
+                // Skip channels for bones not in skeleton
+                if (!skeleton.bone_map_.contains(bone_name)) {
+                    // debug::print("Skipping animation channel for unknown bone: " + bone_name);
+                    // These are often bone ends which can be used for inverse kinematics
+                    // Also the root node is skipped which can be used for global transforms
+                    continue;
+                }
+
+                channel.bone_id = skeleton.bone_map_.at(bone_name);
+                channel.bone_name = bone_name;
+
+                // Position keys
+                for (size_t pk = 0; pk < ai_channel->mNumPositionKeys; pk++) {
+                    const aiVectorKey& ai_pos_key = ai_channel->mPositionKeys[pk];
+                    PositionKey pos_key;
+                    pos_key.time = ai_pos_key.mTime;
+                    pos_key.value = glm::vec3(ai_pos_key.mValue.x, ai_pos_key.mValue.y, ai_pos_key.mValue.z);
+                    channel.position_keys.push_back(pos_key);
+                }
+
+                // Rotation keys
+                for (size_t rk = 0; rk < ai_channel->mNumRotationKeys; rk++) {
+                    const aiQuatKey& ai_rot_key = ai_channel->mRotationKeys[rk];
+                    RotationKey rot_key;
+                    rot_key.time = ai_rot_key.mTime;
+                    rot_key.value = glm::quat(ai_rot_key.mValue.w, ai_rot_key.mValue.x, ai_rot_key.mValue.y, ai_rot_key.mValue.z);
+                    channel.rotation_keys.push_back(rot_key);
+                }
+
+                // Scale keys
+                for (size_t sk = 0; sk < ai_channel->mNumScalingKeys; sk++) {
+                    const aiVectorKey& ai_scale_key = ai_channel->mScalingKeys[sk];
+                    ScaleKey scale_key;
+                    scale_key.time = ai_scale_key.mTime;
+                    scale_key.value = glm::vec3(ai_scale_key.mValue.x, ai_scale_key.mValue.y,  ai_scale_key.mValue.z);
+                    channel.scale_keys.push_back(scale_key);
+                }
+
+                animation.channels[channel.bone_id] = channel;
+            }
+
+            animations_map[ai_anim->mName.C_Str()] = animation;
+        }
+        return animations_map;
+    }
+
     SkinnedMesh SkeletalMesh::loadFbx(const char* filename) {
         auto directory = util::getDirectory(filename);
 
         Assimp::Importer importer;
+        importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
 
         // aiProcess_LimitBoneWeights; // Limit bone weights to 4 per vertex
 
@@ -172,6 +364,12 @@ namespace gl {
         }
 
         auto skeleton = loadSkeleton(scene);
+        skeleton.animations_ = loadAnimations(scene, skeleton);
+        std::vector<AnimationChannel> channels;
+        for (const auto& [k, v] : skeleton.animations_["Take 001"].channels) {
+            channels.push_back(v);
+        }
+
         skeleton.updateBoneMatrices();  // Calculate bone matrices for bind pose
 
         auto materials = Texture::loadSceneMaterials(scene, directory);
