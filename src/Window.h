@@ -25,6 +25,7 @@ namespace gl {}
 
         static float getAspectRatio();
         static bool isCursorVisible();
+        static double getCurrentTime();
 
     private:
         static void display();

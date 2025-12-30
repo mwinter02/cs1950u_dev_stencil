@@ -118,6 +118,10 @@ bool Window::isCursorVisible() {
         return cursor_visible_;
 }
 
+double Window::getCurrentTime() {
+        return s_currentTime;
+}
+
 int Window::initializeGLFW(int width, int height) {
         if (!glfwInit()) return -1;
 

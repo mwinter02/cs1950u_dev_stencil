@@ -276,7 +276,7 @@ namespace gl {
             }
         }
 
-        updateBoneMatrices();
+        // updateBoneMatrices();
     }
 
     void Skeleton::resetToBindPose() {
