@@ -5,6 +5,8 @@
 #include "Mesh.h"
 #include "../Debug.h"
 #include "../Util.h"
+#include "assimp/cimport.h"
+#include "assimp/Exporter.hpp"
 #include "assimp/Importer.hpp"
 #include "assimp/postprocess.h"
 #include "assimp/scene.h"
@@ -116,14 +118,21 @@ namespace gl {
 
     std::string findRootBone(aiNode* curr_node, const std::unordered_set<std::string>& bone_map) {
         if (bone_map.contains(curr_node->mName.C_Str())) {
+            if (auto parent = curr_node->mParent) {
+                if (bone_map.contains(parent->mName.C_Str())) {
+                    // Not root, continue searching
+                    return findRootBone(parent, bone_map);
+                }
+            }
+            // No parent, or parent not a bone: this is root
             return curr_node->mName.C_Str();
         }
-        for (size_t i = 0; i < curr_node->mNumChildren; i++) {
-            auto result = findRootBone(curr_node->mChildren[i], bone_map);
-            if (!result.empty()) {
-                return result;
-            }
-        }
+        // for (size_t i = 0; i < curr_node->mNumChildren; i++) {
+        //     auto result = findRootBone(curr_node->mChildren[i], bone_map);
+        //     if (!result.empty()) {
+        //         return result;
+        //     }
+        // }
         debug::error("Failed to find root bone");
         return "";
     }
@@ -137,20 +146,35 @@ namespace gl {
         return {1.0f};
     }
 
+    void createHierarchy(Skeleton& skeleton, const aiScene* scene, const std::unordered_set<std::string>& bone_names) {
+
+        for (auto bone_name : bone_names) {
+            auto node = scene->mRootNode->FindNode(aiString(bone_name));
+            if (node && node->mParent) {
+                std::string parent_name = node->mParent->mName.C_Str();
+                if (bone_names.contains(parent_name)) {
+                    int bone_id = skeleton.bone_map_[bone_name];
+                    int parent_id = skeleton.bone_map_[parent_name];
+                    skeleton.bones_[bone_id].parent_id = parent_id;
+                    skeleton.bones_[parent_id].addChild(skeleton.bones_[bone_id]);
+                }
+            }
+        }
+
+    }
+
     void constructSkeleton(Skeleton& skeleton, aiNode* curr_node, const aiScene* scene,
                           int parent_id, const glm::mat4& parent_global_transform) {
         aiBone* ai_bone = scene->findBone(curr_node->mName);
         const glm::mat4 node_local = util::aiToGlmMat4(curr_node->mTransformation);
         const glm::mat4 node_global = parent_global_transform * node_local;
-
+        const int current_id = (int) skeleton.bones_.size();
         if (ai_bone) {
-            const int current_id = (int) skeleton.bones_.size();
-            const glm::mat4 offset_matrix = util::aiToGlmMat4(ai_bone->mOffsetMatrix);
 
+            const glm::mat4 offset_matrix = util::aiToGlmMat4(ai_bone->mOffsetMatrix);
             // The offset matrix is the INVERSE of the bind pose global transform
             // So the bind pose global transform is the inverse of the offset matrix
             const glm::mat4 bind_pose_global = glm::inverse(offset_matrix);
-
             // Determine the local transform to store
             glm::mat4 local_transform;
             if (parent_id == -1) {
@@ -172,9 +196,10 @@ namespace gl {
             }
         }
         else {
-            // Current node not a bone, accumulate its transform but don't change parent_id
+            skeleton.addBone(curr_node->mName.C_Str(), current_id, parent_id,
+                             glm::mat4(1.0f), node_local, true); // Virtual bone
             for (size_t i = 0; i < curr_node->mNumChildren; i++) {
-                constructSkeleton(skeleton, curr_node->mChildren[i], scene, parent_id, node_global);
+                constructSkeleton(skeleton, curr_node->mChildren[i], scene, current_id, node_global);
             }
         }
     }
@@ -182,7 +207,7 @@ namespace gl {
     constexpr unsigned int SKINNED_IMPORT_PRESET =  aiProcess_Triangulate |
                                                     aiProcess_JoinIdenticalVertices |
                                                     aiProcess_OptimizeMeshes |
-                                                    aiProcess_GenSmoothNormals |
+                                                    aiProcess_GenNormals |
                                                     aiProcess_CalcTangentSpace |
                                                     // aiProcess_PopulateArmatureData | // Create bone hierarchy
                                                     aiProcess_FlipUVs | // since OpenGL's UVs are flipped
@@ -209,16 +234,24 @@ namespace gl {
                 }
             }
         }
-        std::string root_name = findRootBone(scene->mRootNode, bone_names);
+
+        auto start_bone = scene->mRootNode->FindNode(aiString(*bone_names.begin()));
+        std::string root_name = findRootBone(start_bone, bone_names);
         auto node = scene->mRootNode->FindNode(aiString(root_name));
-        constructSkeleton(skeleton, node, scene, -1, glm::mat4(1.0f));
+        auto name = node->mParent->mName;
+
+
+        constructSkeleton(skeleton, scene->mRootNode, scene, -1, glm::mat4(1.0f));
+        auto x = skeleton.bones_.size();
+
+
         return skeleton;
     }
 
     void Skeleton::addBone(const std::string& bone_name, const unsigned int current_id, const int parent_id,
-        const glm::mat4& offset_matrix, const glm::mat4& local_transform) {
+        const glm::mat4& offset_matrix, const glm::mat4& local_transform, const bool is_virtual) {
 
-        const auto to_add = Bone(bone_name, current_id, parent_id, offset_matrix, local_transform);
+        const auto to_add = Bone(bone_name, current_id, parent_id, offset_matrix, local_transform, is_virtual);
         bones_.push_back(to_add);
         bone_matrices_.push_back(offset_matrix);
         bone_map_[to_add.name] = current_id;
@@ -258,17 +291,22 @@ namespace gl {
         }
     }
 
+    void Skeleton::setCurrentAnimation(size_t index) {
+        current_animation_ = &animations_[index];
+    }
+
     void Skeleton::setCurrentAnimation(const std::string& animation_name) {
-        if (!animations_.contains(animation_name)) {
+        if (!animations_name_to_index.contains(animation_name)) {
             debug::error("Animation " + animation_name + " not found in skeleton.");
             return;
         }
-        current_animation_ = &animations_.at(animation_name);
+        current_animation_ = &animations_[animations_name_to_index.at(animation_name)];
     }
 
-    void Skeleton::playCurrentAnimation(double current_time) {
+    void Skeleton::playCurrentAnimation(double time_since_previous) {
         if (current_animation_) {
-            const double time_in_ticks = current_time * current_animation_->ticks_per_second;
+            current_animation_->time_in_seconds += time_since_previous;
+            const double time_in_ticks = current_animation_->time_in_seconds * current_animation_->ticks_per_second;
             const double animation_time = fmod(time_in_ticks, current_animation_->duration);
             // Update each bone's local transform based on animation channels
             for (auto& [bone_id, channel] : current_animation_->channels) {
@@ -276,7 +314,7 @@ namespace gl {
             }
         }
 
-        // updateBoneMatrices();
+        updateBoneMatrices();
     }
 
     void Skeleton::resetToBindPose() {
@@ -285,9 +323,28 @@ namespace gl {
         }
     }
 
-    std::unordered_map<std::string, Animation> loadAnimations(const aiScene* scene, const Skeleton& skeleton) {
-        if (!scene->HasAnimations()) return {};
-        std::unordered_map<std::string,Animation> animations_map;
+
+    void SkeletalMesh::loadAnimations(const char* filename, Skeleton& skeleton) {
+        Assimp::Importer importer;
+        importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
+
+        // aiProcess_LimitBoneWeights; // Limit bone weights to 4 per vertex
+
+
+        auto path = util::getPath(filename);
+        const aiScene* scene = importer.ReadFile(path,SKINNED_IMPORT_PRESET);     // Calculate tangent space for normal mapping
+
+        if (!scene || !scene->mRootNode) {
+            debug::error("Failed to load FBX: " + std::string(importer.GetErrorString()));
+
+            return;
+        }
+        loadAnimations(scene,skeleton);
+    }
+
+    void SkeletalMesh::loadAnimations(const aiScene* scene, Skeleton& skeleton) {
+        if (!scene->HasAnimations()) return;
+        std::unordered_map<std::string, Animation> animations_map;
         for (size_t i = 0; i < scene->mNumAnimations; i++) {
             const aiAnimation* ai_anim = scene->mAnimations[i];
 
@@ -302,9 +359,7 @@ namespace gl {
 
                 // Skip channels for bones not in skeleton
                 if (!skeleton.bone_map_.contains(bone_name)) {
-                    // debug::print("Skipping animation channel for unknown bone: " + bone_name);
-                    // These are often bone ends which can be used for inverse kinematics
-                    // Also the root node is skipped which can be used for global transforms
+                    debug::print("Skipping animation channel for unknown bone: " + bone_name);
                     continue;
                 }
 
@@ -343,8 +398,20 @@ namespace gl {
 
             animations_map[ai_anim->mName.C_Str()] = animation;
         }
-        return animations_map;
+
+        for (const auto& [name, anim] : animations_map) {
+            auto n = name;
+            int idx = 0;
+            while (skeleton.animations_name_to_index.contains(n)) {
+                n = name + "_" + std::to_string(idx++);
+            }
+            skeleton.animations_name_to_index[n] = skeleton.animations_.size();
+            skeleton.animations_.push_back(anim);
+        }
     }
+
+
+
 
     SkinnedMesh SkeletalMesh::loadFbx(const char* filename) {
         auto directory = util::getDirectory(filename);
@@ -363,13 +430,10 @@ namespace gl {
             return {};
         }
 
-        auto skeleton = loadSkeleton(scene);
-        skeleton.animations_ = loadAnimations(scene, skeleton);
-        std::vector<AnimationChannel> channels;
-        for (const auto& [k, v] : skeleton.animations_["Take 001"].channels) {
-            channels.push_back(v);
-        }
 
+
+        auto skeleton = loadSkeleton(scene);
+        loadAnimations(scene, skeleton);
         skeleton.updateBoneMatrices();  // Calculate bone matrices for bind pose
 
         auto materials = Texture::loadSceneMaterials(scene, directory);
@@ -378,7 +442,15 @@ namespace gl {
             const aiMesh* aimesh = scene->mMeshes[i];
             if (!aimesh->HasBones()) { continue; }
 
+            for (auto vi =0; vi < aimesh->mNumVertices; vi++) {
+                const aiVector3D& pos = aimesh->mVertices[vi];
+                skeleton.vertices_.emplace_back(pos.x, pos.y, pos.z);
+            }
 
+            for (auto fi = 0; fi < aimesh->mNumFaces; fi++) {
+                const aiFace& face = aimesh->mFaces[fi];
+                skeleton.faces_.emplace_back(face.mIndices[0], face.mIndices[1], face.mIndices[2]);
+            }
 
             std::vector<glm::vec3> vertices(aimesh->mNumVertices);
             std::vector<BoneIDs> bone_ids(aimesh->mNumVertices, BoneIDs{});
@@ -390,9 +462,17 @@ namespace gl {
                 const aiBone* bone = aimesh->mBones[b];
                 auto bone_id = skeleton.bone_map_[bone->mName.C_Str()];
 
+
+
                 for (size_t w = 0; w < bone->mNumWeights; w++) {
                     const aiVertexWeight& weight = bone->mWeights[w];
                     const size_t vertex_id = weight.mVertexId;
+
+                    auto& s_bone = skeleton.bones_[bone_id];
+                    s_bone.vertex_weights[vertex_id] = weight.mWeight;
+                    skeleton.vertex_to_boneID_map_[vertex_id].push_back(bone_id);
+
+
                     for (size_t j = 0; j < MAX_BONES_PER_VERTEX; j++) {
                         if (bone_weights[vertex_id][j] == 0.0f) {
                             bone_ids[vertex_id][j] = bone_id;
@@ -413,6 +493,8 @@ namespace gl {
                     if (sum != 1.0f) for (auto& w : b_w) w /= sum; // normalize
                 }
             }
+
+            // skeleton.bones_[0].vertex_weights
 
             // Separate vectors for each attribute type
             std::vector<glm::vec3> positions;
@@ -449,9 +531,13 @@ namespace gl {
             DrawObject object;
             object.shape = loadSkinnedShape(positions, normals, texcoords, face_bone_ids, face_bone_weights);
             object.material = materials[material_name];
+
+            mesh.min = glm::min(mesh.min, object.shape.min);
+            mesh.max = glm::max(mesh.max, object.shape.max);
             mesh.objects.push_back(object);
 
         }
+
 
 
         skeleton.updateBoneMatrices();
@@ -510,8 +596,8 @@ namespace gl {
         glBindVertexArray(0);
 
         // Calculate bounding box
-        glm::vec3 bmin(FLT_MAX);
-        glm::vec3 bmax(-FLT_MAX);
+        glm::vec3 bmin(std::numeric_limits<float>::max());
+        glm::vec3 bmax(std::numeric_limits<float>::lowest());
         for (const auto& pos : positions) {
             bmin = glm::min(bmin, pos);
             bmax = glm::max(bmax, pos);
