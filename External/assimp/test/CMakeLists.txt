@@ -59,10 +59,6 @@ endif()
 # Assimp library can be found, even if it is not installed system-wide yet.
 LINK_DIRECTORIES( ${Assimp_BINARY_DIR} ${AssetImporter_BINARY_DIR}/lib )
 
-SET(TOOLS
-    unit/Tools/TestTools.h
-)
-
 SET( COMMON
   unit/utSimd.cpp
   unit/utIOSystem.cpp
@@ -223,7 +219,6 @@ SOURCE_GROUP( UnitTests\\GeometryTools FILES ${Geometry} )
 SOURCE_GROUP( UnitTests\\ImportExport  FILES ${IMPORTERS} )
 SOURCE_GROUP( UnitTests\\Material      FILES ${MATERIAL} )
 SOURCE_GROUP( UnitTests\\Math          FILES ${MATH} )
-SOURCE_GROUP( UnitTests\\Tools         FILES ${TOOLS} )
 SOURCE_GROUP( UnitTests\\PostProcess   FILES ${POST_PROCESSES})
 
 add_executable( unit
@@ -232,12 +227,11 @@ add_executable( unit
     ../code/Common/Version.cpp
 	../code/Common/Base64.cpp
 	${COMMON}
-    ${Geometry}
+  ${Geometry}
 	${IMPORTERS}
 	${MATERIAL}
 	${MATH}
-    ${POST_PROCESSES}
-    ${TOOLS}
+  ${POST_PROCESSES}
 )
 
 if(ASSIMP_HUNTER_ENABLED)
