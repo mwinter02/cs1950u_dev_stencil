@@ -7,7 +7,7 @@
 #include "Shaders.h"
 #include "SkeletalMesh.h"
 #include "stb_image.h"
-#include "shapes/Cube.h"
+#include "../Debug.h"
 
 namespace gl {
 
@@ -18,8 +18,7 @@ namespace gl {
 
     void Graphics::initialize() {
         initializePhongShader();
-        setAmbientLight(glm::vec3(0.2));
-        loadShapes();
+        setAmbientLight(glm::vec3(0.5));
     }
 
     void Graphics::tearDown() {
@@ -60,7 +59,8 @@ namespace gl {
         setMaterialUniforms(material);
 
         glBindVertexArray(drawShape->vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3 * drawShape->numTriangles);
+        glDrawElements(GL_TRIANGLES, 3 * drawShape->numTriangles, GL_UNSIGNED_INT, 0);
+
         glBindVertexArray(0);
     }
 
@@ -72,7 +72,7 @@ namespace gl {
         for (const auto& obj : draw_mesh->objects) {
             setMaterialUniforms(obj.material);
             glBindVertexArray(obj.shape.vao);
-            glDrawArrays(GL_TRIANGLES, 0, 3 * obj.shape.numTriangles);
+            glDrawElements(GL_TRIANGLES, 3 * obj.shape.numTriangles, GL_UNSIGNED_INT, 0);
             glBindVertexArray(0);
         }
 
@@ -92,11 +92,17 @@ namespace gl {
         for (const auto& obj : draw_mesh.objects) {
             setMaterialUniforms(obj.material);
             glBindVertexArray(obj.shape.vao);
-            glDrawArrays(GL_TRIANGLES, 0, 3 * obj.shape.numTriangles);
+            glDrawElements(GL_TRIANGLES, 3 * obj.shape.numTriangles, GL_UNSIGNED_INT, 0);
             glBindVertexArray(0);
         }
 
     }
+
+    void Graphics::addShape(const char* name, const DrawShape& shape) {
+        shapes_[name] = shape;
+    }
+
+
 
     const DrawShape* Graphics::getShape(const std::string& shape_name) {
         return &shapes_[shape_name];
@@ -115,6 +121,9 @@ namespace gl {
     }
 
     void Graphics::setAmbientLight(const glm::vec3& ambient) {
+        usePhongShader();
+        active_shader_->setVec3("ambient_light", ambient);
+        useSkinnedShader();
         active_shader_->setVec3("ambient_light", ambient);
     }
 
@@ -127,22 +136,6 @@ namespace gl {
         skinned_ = Shaders::createShaderProgram(skinned_vert,phong_.getFragmentID());
 
         active_shader_= &phong_;
-    }
-
-    void Graphics::loadShapes() {
-        // auto cone = Cone();
-        // auto sphere = Sphere();
-        auto cube = Cube();
-        // auto cylinder = Cylinder();
-        // auto quad = Quad();
-        const int quality = 8;
-
-        // shapes["quad"] = Mesh::loadShape(quad.updateParams(1,1));
-        // shapes["cone"] = Mesh::loadShape(cone.updateParams(1,quality));
-        // shapes["sphere"] = Mesh::loadShape(sphere.updateParams(quality,quality));
-        shapes_["cube"] = Mesh::loadStaticShape(cube.updateParams(1,1));
-        // shapes["cylinder"] = Mesh::loadShape(cylinder.updateParams(1,quality));
-
     }
 
     void Graphics::setMaterialUniforms(const DrawMaterial& material) {

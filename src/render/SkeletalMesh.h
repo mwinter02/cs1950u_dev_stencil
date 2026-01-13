@@ -132,13 +132,13 @@ namespace gl {
 
     private:
 
-        static DrawShape loadSkinnedShape(
+        static DrawShape loadSkinnedShapeIndexed(
             const std::vector<glm::vec3>& positions,
             const std::vector<glm::vec3>& normals,
             const std::vector<glm::vec2>& texcoords,
             const std::vector<BoneIDs>& bone_ids,
-            const std::vector<BoneWeights>& bone_weights);
-
+            const std::vector<BoneWeights>& bone_weights,
+            const std::vector<unsigned int>& indices);
 
         std::vector<glm::vec3> vertex_data_;
         std::vector<glm::ivec4> bone_ids_; // Bone IDs for each vertex

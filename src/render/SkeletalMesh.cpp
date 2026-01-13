@@ -419,9 +419,6 @@ namespace gl {
         Assimp::Importer importer;
         importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
 
-        // aiProcess_LimitBoneWeights; // Limit bone weights to 4 per vertex
-
-
         auto path = util::getPath(filename);
         const aiScene* scene = importer.ReadFile(path,SKINNED_IMPORT_PRESET);     // Calculate tangent space for normal mapping
 
@@ -494,42 +491,49 @@ namespace gl {
                 }
             }
 
-            // skeleton.bones_[0].vertex_weights
-
-            // Separate vectors for each attribute type
+            // Build unique vertex data (indexed approach)
             std::vector<glm::vec3> positions;
             std::vector<glm::vec3> normals;
             std::vector<glm::vec2> texcoords;
-            std::vector<BoneIDs> face_bone_ids;
-            std::vector<BoneWeights> face_bone_weights;
+            std::vector<BoneIDs> vertex_bone_ids;
+            std::vector<BoneWeights> vertex_bone_weights;
 
-            positions.reserve(aimesh->mNumFaces * 3);
-            normals.reserve(aimesh->mNumFaces * 3);
-            texcoords.reserve(aimesh->mNumFaces * 3);
-            face_bone_ids.reserve(aimesh->mNumFaces * 3);
-            face_bone_weights.reserve(aimesh->mNumFaces * 3);
+            positions.reserve(aimesh->mNumVertices);
+            normals.reserve(aimesh->mNumVertices);
+            texcoords.reserve(aimesh->mNumVertices);
+            vertex_bone_ids.reserve(aimesh->mNumVertices);
+            vertex_bone_weights.reserve(aimesh->mNumVertices);
 
-            for (int f = 0; f < aimesh->mNumFaces; f++) {
+            // Store unique vertices
+            for (unsigned int v = 0; v < aimesh->mNumVertices; v++) {
+                const aiVector3D& pos = aimesh->mVertices[v];
+                const aiVector3D& normal = aimesh->mNormals[v];
+                const aiVector3D& texcoord = aimesh->HasTextureCoords(0) ?
+                    aimesh->mTextureCoords[0][v] : aiVector3D(0.0f, 0.0f, 0.0f);
+
+                vertices[v] = glm::vec3(pos.x, pos.y, pos.z);
+                positions.push_back(glm::vec3(pos.x, pos.y, pos.z));
+                normals.push_back(glm::vec3(normal.x, normal.y, normal.z));
+                texcoords.push_back(glm::vec2(texcoord.x, texcoord.y));
+                vertex_bone_ids.push_back(bone_ids[v]);
+                vertex_bone_weights.push_back(bone_weights[v]);
+            }
+
+            // Build index buffer from faces
+            std::vector<unsigned int> indices;
+            indices.reserve(aimesh->mNumFaces * 3);
+
+            for (unsigned int f = 0; f < aimesh->mNumFaces; f++) {
                 const aiFace& face = aimesh->mFaces[f];
-                for (int v = 0; v < face.mNumIndices; v++) {
-                    auto index = face.mIndices[v];
-                    const aiVector3D& pos = aimesh->mVertices[index];
-                    const aiVector3D& normal = aimesh->mNormals[index];
-                    const aiVector3D& texcoord = aimesh->HasTextureCoords(0) ? aimesh->mTextureCoords[0][index] : aiVector3D(0.0f, 0.0f, 0.0f);
-
-                    vertices[index] = glm::vec3(pos.x, pos.y, pos.z);
-
-                    positions.push_back(glm::vec3(pos.x, pos.y, pos.z));
-                    normals.push_back(glm::vec3(normal.x, normal.y, normal.z));
-                    texcoords.push_back(glm::vec2(texcoord.x, texcoord.y));
-                    face_bone_ids.push_back(bone_ids[index]);
-                    face_bone_weights.push_back(bone_weights[index]);
+                for (unsigned int v = 0; v < face.mNumIndices; v++) {
+                    indices.push_back(face.mIndices[v]);
                 }
             }
 
             auto material_name = scene->mMaterials[aimesh->mMaterialIndex]->GetName().C_Str();
             DrawObject object;
-            object.shape = loadSkinnedShape(positions, normals, texcoords, face_bone_ids, face_bone_weights);
+            object.shape = loadSkinnedShapeIndexed(positions, normals, texcoords,
+                                                    vertex_bone_ids, vertex_bone_weights, indices);
             object.material = materials[material_name];
 
             mesh.min = glm::min(mesh.min, object.shape.min);
@@ -544,56 +548,103 @@ namespace gl {
         return {mesh, skeleton};
     }
 
-    DrawShape SkeletalMesh::loadSkinnedShape(
+    DrawShape SkeletalMesh::loadSkinnedShapeIndexed(
         const std::vector<glm::vec3>& positions,
         const std::vector<glm::vec3>& normals,
         const std::vector<glm::vec2>& texcoords,
         const std::vector<BoneIDs>& bone_ids,
-        const std::vector<BoneWeights>& bone_weights) {
+        const std::vector<BoneWeights>& bone_weights,
+        const std::vector<unsigned int>& indices) {
 
         DrawShape shape;
-        GLuint vao;
-        GLuint vbo_pos, vbo_normal, vbo_texcoord, vbo_bone_ids, vbo_bone_weights;
+        GLuint vao, vbo, ebo;
 
         glGenVertexArrays(1, &vao);
         glBindVertexArray(vao);
 
-        // Position buffer (attribute 0)
-        glGenBuffers(1, &vbo_pos);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_pos);
-        glBufferData(GL_ARRAY_BUFFER, positions.size() * sizeof(glm::vec3), positions.data(), GL_STATIC_DRAW);
+        // Calculate interleaved buffer size
+        const size_t num_vertices = positions.size();
+        constexpr size_t floats_per_vertex = 3 + 3 + 2;  // pos + normal + texcoord
+        constexpr size_t uints_per_vertex = 4;           // bone IDs
+        constexpr size_t weights_per_vertex = 4;         // bone weights
+
+        // Create interleaved VBO: [pos(3), normal(3), texcoord(2), bone_ids(4), bone_weights(4)] per vertex
+        std::vector<float> interleaved_data;
+        interleaved_data.reserve(num_vertices * (floats_per_vertex + weights_per_vertex));
+
+        std::vector<unsigned int> bone_id_data;
+        bone_id_data.reserve(num_vertices * uints_per_vertex);
+
+        for (size_t i = 0; i < num_vertices; i++) {
+            // Position
+            interleaved_data.push_back(positions[i].x);
+            interleaved_data.push_back(positions[i].y);
+            interleaved_data.push_back(positions[i].z);
+
+            // Normal
+            interleaved_data.push_back(normals[i].x);
+            interleaved_data.push_back(normals[i].y);
+            interleaved_data.push_back(normals[i].z);
+
+            // Texcoord
+            interleaved_data.push_back(texcoords[i].x);
+            interleaved_data.push_back(texcoords[i].y);
+
+            // Bone weights (after float data)
+            interleaved_data.push_back(bone_weights[i][0]);
+            interleaved_data.push_back(bone_weights[i][1]);
+            interleaved_data.push_back(bone_weights[i][2]);
+            interleaved_data.push_back(bone_weights[i][3]);
+
+            // Bone IDs (stored separately since they're integers)
+            bone_id_data.push_back(bone_ids[i][0]);
+            bone_id_data.push_back(bone_ids[i][1]);
+            bone_id_data.push_back(bone_ids[i][2]);
+            bone_id_data.push_back(bone_ids[i][3]);
+        }
+
+        const GLsizei stride = (floats_per_vertex + weights_per_vertex) * sizeof(float);
+
+        // Create VBO for float data (pos, normal, texcoord, weights)
+        GLuint vbo_float;
+        glGenBuffers(1, &vbo_float);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo_float);
+        glBufferData(GL_ARRAY_BUFFER, interleaved_data.size() * sizeof(float), interleaved_data.data(), GL_STATIC_DRAW);
+
+        // Position (attribute 0)
         glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
 
-        // Normal buffer (attribute 1)
-        glGenBuffers(1, &vbo_normal);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_normal);
-        glBufferData(GL_ARRAY_BUFFER, normals.size() * sizeof(glm::vec3), normals.data(), GL_STATIC_DRAW);
+        // Normal (attribute 1)
         glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
 
-        // Texcoord buffer (attribute 2)
-        glGenBuffers(1, &vbo_texcoord);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_texcoord);
-        glBufferData(GL_ARRAY_BUFFER, texcoords.size() * sizeof(glm::vec2), texcoords.data(), GL_STATIC_DRAW);
+        // Texcoord (attribute 2)
         glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
 
-        // Bone IDs buffer (attribute 3) - PROPER INTEGER HANDLING
+        // Bone weights (attribute 4)
+        glEnableVertexAttribArray(4);
+        glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride, (void*)(8 * sizeof(float)));
+
+        // Create separate VBO for bone IDs (integers)
+        GLuint vbo_bone_ids;
         glGenBuffers(1, &vbo_bone_ids);
         glBindBuffer(GL_ARRAY_BUFFER, vbo_bone_ids);
-        glBufferData(GL_ARRAY_BUFFER, bone_ids.size() * sizeof(BoneIDs), bone_ids.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, bone_id_data.size() * sizeof(unsigned int), bone_id_data.data(), GL_STATIC_DRAW);
+
+        // Bone IDs (attribute 3) - must use glVertexAttribIPointer for integers
         glEnableVertexAttribArray(3);
-        glVertexAttribIPointer(3, 4, GL_UNSIGNED_INT, 0, nullptr);  // Use GL_UNSIGNED_INT
+        glVertexAttribIPointer(3, 4, GL_UNSIGNED_INT, 0, nullptr);
 
-        // Bone weights buffer (attribute 4)
-        glGenBuffers(1, &vbo_bone_weights);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_bone_weights);
-        glBufferData(GL_ARRAY_BUFFER, bone_weights.size() * sizeof(BoneWeights), bone_weights.data(), GL_STATIC_DRAW);
-        glEnableVertexAttribArray(4);
-        glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 0, nullptr);
+        // Create and setup EBO
+        glGenBuffers(1, &ebo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 
+        // Unbind VAO (preserves EBO binding)
         glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
 
         // Calculate bounding box
         glm::vec3 bmin(std::numeric_limits<float>::max());
@@ -604,11 +655,13 @@ namespace gl {
         }
 
         shape.vao = vao;
-        shape.vbo = vbo_pos;  // Store primary VBO (we could also store all VBOs if needed)
-        shape.numTriangles = positions.size() / 3;
+        shape.vbo = vbo_float;
+        shape.ebo = ebo;
+        shape.numTriangles = indices.size() / 3;
         shape.min = bmin;
         shape.max = bmax;
 
         return shape;
     }
+
 }

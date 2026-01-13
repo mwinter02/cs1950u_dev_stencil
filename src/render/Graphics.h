@@ -8,11 +8,10 @@ namespace gl {
     class Camera;
     class ShaderProgram;
 
-
-
     struct DrawShape {
         GLuint vao = 0;
         GLuint vbo = 0; // vertex buffer id
+        GLuint ebo = 0; // element buffer id (for indexed rendering)
         size_t numTriangles = 0;
         glm::vec3 min = glm::vec3(std::numeric_limits<float>::max());
         glm::vec3 max = glm::vec3(std::numeric_limits<float>::lowest());
@@ -51,12 +50,11 @@ namespace gl {
         static void drawMesh(const DrawMesh* draw_mesh, const Transform& transform);
         static void drawSkinned(SkinnedMesh* skinned_mesh, const Transform& transform);
 
+        static void addShape(const char* name, const DrawShape& shape);
         static const DrawShape* getShape(const std::string& shape_name);
-
 
     private:
         static void initializePhongShader();
-        static void loadShapes();
         static void setMaterialUniforms(const DrawMaterial& material);
         static void bindMaterialTextures(const Textures& textures);
         static void bindTexture(GLuint texture, int unit, const char* uniform_name);

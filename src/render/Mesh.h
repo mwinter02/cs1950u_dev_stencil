@@ -7,17 +7,14 @@ struct aiScene;
 struct aiTexture;
 
 namespace gl {
+    class Primitive;
     struct DrawShape;
-
-
-
-
 
     class Mesh {
     public:
 
-
-        static DrawShape loadStaticShape(const std::vector<float> &data);
+        static DrawShape loadStaticShapeIndexed(const std::vector<float>& buffer_data, const std::vector<unsigned int>& indices);
+        static DrawShape loadPrimitive(const Primitive& primitive);
         static DrawMesh loadStaticMesh(const char* filename);
 
     private:
