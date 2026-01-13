@@ -47,19 +47,19 @@ void main() {
 
     // Get material colors from textures or fallback to vertex colors
     vec3 ambient = has_ambient_tex
-        ? ambient * texture(texture_ambient, TexCoord).rgb
-        : ambient;
+    ? ambient * texture(texture_ambient, TexCoord).rgb
+    : ambient;
 
     vec3 diffuse = has_diffuse_tex
-        ? diffuse * texture(texture_diffuse, TexCoord).rgb
-        : diffuse;
+    ? diffuse * texture(texture_diffuse, TexCoord).rgb
+    : diffuse;
 
     vec3 specular = has_specular_tex
-        ? specular * texture(texture_specular, TexCoord).rgb
-        : specular;
+    ? specular * texture(texture_specular, TexCoord).rgb
+    : specular;
 
     // Ambient component
-    vec3 ambientResult = ambient * ambient_light;
+    vec3 ambientResult = diffuse * ambient_light;
 
     // Diffuse component
     float diff = max(dot(norm, lightDir), 0.0);

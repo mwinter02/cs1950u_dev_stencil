@@ -183,6 +183,7 @@ int Window::initializeGLFW(int width, int height) {
     void Window::keyboardCallback(GLFWwindow *window, int key, int scancode, int action, int mods) {
         if (action == GLFW_PRESS) {
             keys_[key] = true;
+            core_->keyPressed(key);
         }
         else if (action == GLFW_RELEASE) {
             keys_[key] = false;

@@ -27,8 +27,9 @@ public:
     void draw() const;
 
     void update(double delta_time);
+    void controller(double delta_time);
 
-    void keyInputHandler(double delta_time);
+    void keyPressed(int key);
 private:
     std::shared_ptr<gl::Camera> m_camera;
     std::shared_ptr<gl::Light> m_light;
