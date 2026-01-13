@@ -1,150 +1,109 @@
 #include "Cube.h"
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-#include <iostream>
+
+
 namespace gl {
-    std::vector<float> Cube::updateParams(int param1, int param2) {
-
-        m_vertexData.clear();
-        vertcies.clear();
-        m_param1 = param1;
-
-        setVertexData();
-        return m_vertexData;
+    Cube::Cube(int subdivisions) {
+        param_1 = std::max(1, subdivisions);
+        param_2 = std::max(1, subdivisions);
+        Cube::makeShape();
     }
 
-    void Cube::setVertexData() {
+    void Cube::makeShape() {
+        float size = 1.f;
+        const float halfSize = size / 2.0f;
 
-        // +Z face (looking at the cube "front")
-        makeFace(glm::vec3(-0.5f,  0.5f,  0.5f),
-                 glm::vec3( 0.5f,  0.5f,  0.5f),
-                 glm::vec3(-0.5f, -0.5f,  0.5f),
-                 glm::vec3( 0.5f, -0.5f,  0.5f));
+        // Standard cube unwrap UV layout (cross pattern):
+        // Texture is divided into 3x4 grid, with faces arranged as:
+        //       [Top]
+        // [L]  [Front]  [R]  [Back]
+        //       [Bot]
+        // Each face occupies 1/4 width × 1/3 height
 
-        // -Z face (the back of the cube)
-        makeFace(glm::vec3(-0.5f,  0.5f, -0.5f),
-                 glm::vec3(-0.5f, -0.5f, -0.5f),
-                 glm::vec3( 0.5f,  0.5f, -0.5f),
-                 glm::vec3( 0.5f, -0.5f, -0.5f));
+        const float uStep = 1.0f / 4.0f;  // Width of one face
+        const float vStep = 1.0f / 3.0f;  // Height of one face
 
-        // -X face (the left side)
-        makeFace(glm::vec3(-0.5f,  0.5f, -0.5f),
-                 glm::vec3(-0.5f,  0.5f,  0.5f),
-                 glm::vec3(-0.5f, -0.5f, -0.5f),
-                 glm::vec3(-0.5f, -0.5f,  0.5f));
+        // Front face (+Z) - Middle center
+        makeFace(glm::vec3(0, 0, 1), glm::vec3(1, 0, 0), glm::vec3(0, 1, 0),
+                 glm::vec3(0, 0, halfSize), size,
+                 glm::vec2(uStep, vStep), glm::vec2(2.0f * uStep, 2.0f * vStep));
 
-        // +X face (the right side)
-        makeFace(glm::vec3( 0.5f, -0.5f,  0.5f),
-                 glm::vec3( 0.5f,  0.5f,  0.5f),
-                 glm::vec3( 0.5f, -0.5f, -0.5f),
-                 glm::vec3( 0.5f,  0.5f, -0.5f));
+        // Back face (-Z) - Right center
+        makeFace(glm::vec3(0, 0, -1), glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0),
+                 glm::vec3(0, 0, -halfSize), size,
+                 glm::vec2(3.0f * uStep, vStep), glm::vec2(4.0f * uStep, 2.0f * vStep));
 
-        // +Y face (top)
-        makeFace(glm::vec3(-0.5f,  0.5f, -0.5f),
-                 glm::vec3( 0.5f,  0.5f, -0.5f),
-                 glm::vec3(-0.5f,  0.5f,  0.5f),
-                 glm::vec3( 0.5f,  0.5f,  0.5f));
+        // Right face (+X) - Middle right
+        makeFace(glm::vec3(1, 0, 0), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0),
+                 glm::vec3(halfSize, 0, 0), size,
+                 glm::vec2(2.0f * uStep, vStep), glm::vec2(3.0f * uStep, 2.0f * vStep));
 
-        // -Y face (bottom)
-        makeFace(glm::vec3(-0.5f, -0.5f, -0.5f),
-                 glm::vec3(-0.5f, -0.5f,  0.5f),
-                 glm::vec3( 0.5f, -0.5f, -0.5f),
-                 glm::vec3( 0.5f, -0.5f,  0.5f));
+        // Left face (-X) - Middle left
+        makeFace(glm::vec3(-1, 0, 0), glm::vec3(0, 0, 1), glm::vec3(0, 1, 0),
+                 glm::vec3(-halfSize, 0, 0), size,
+                 glm::vec2(0.0f, vStep), glm::vec2(uStep, 2.0f * vStep));
+
+        // Top face (+Y) - Top center
+        makeFace(glm::vec3(0, 1, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, -1),
+                 glm::vec3(0, halfSize, 0), size,
+                 glm::vec2(uStep, 2.0f * vStep), glm::vec2(2.0f * uStep, 3.0f * vStep));
+
+        // Bottom face (-Y) - Bottom center
+        makeFace(glm::vec3(0, -1, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, 1),
+                 glm::vec3(0, -halfSize, 0), size,
+                 glm::vec2(uStep, 0.0f), glm::vec2(2.0f * uStep, vStep));
     }
 
-    void Cube::makeFace(glm::vec3 topLeftPos,
-                        glm::vec3 topRightPos,
-                        glm::vec3 bottomLeftPos,
-                        glm::vec3 bottomRightPos)
-    {
-        int rows = m_param1;
-        int cols = m_param1;
+    void Cube::makeFace(const glm::vec3& normal, const glm::vec3& tangent, const glm::vec3& bitangent,
+                        const glm::vec3& center, float faceSize,
+                        const glm::vec2& uvMin, const glm::vec2& uvMax) {
+        const int subdivisions = param_1;
+        const float halfSize = faceSize / 2.0f;
+        const float step = faceSize / float(subdivisions);
 
-        glm::vec3 rowStep = (bottomLeftPos - topLeftPos) / float(rows);
-        glm::vec3 colStep = (topRightPos   - topLeftPos) / float(cols);
+        // Create a grid of vertices for this face
+        std::vector<std::vector<unsigned int>> vertexGrid(subdivisions + 1);
 
-        for(int r = 0; r < rows; r++) {
-            for(int c = 0; c < cols; c++) {
+        for (int i = 0; i <= subdivisions; i++) {
+            vertexGrid[i].reserve(subdivisions + 1);
+            for (int j = 0; j <= subdivisions; j++) {
+                // Calculate position on the face
+                const float u = -halfSize + float(i) * step;
+                const float v = -halfSize + float(j) * step;
 
-                glm::vec3 tileTopLeft     = topLeftPos + float(r) * rowStep + float(c) * colStep;
-                glm::vec3 tileTopRight    = tileTopLeft + colStep;
-                glm::vec3 tileBottomLeft  = tileTopLeft + rowStep;
-                glm::vec3 tileBottomRight = tileTopRight + rowStep;
-                float u0 = (float(c)) / float(cols);
-                float u1 = (float(c) + 1.f) / float(cols);
-                float v0 = (float(r)) / float(rows);
-                float v1 = (float(r) + 1.f) / float(rows);
+                const glm::vec3 pos = center + u * tangent + v * bitangent;
 
-                glm::vec2 uvTopLeft(u0, 1.f - v0);
-                glm::vec2 uvTopRight(u1, 1.f - v0);
-                glm::vec2 uvBottomLeft(u0, 1.f - v1);
-                glm::vec2 uvBottomRight(u1, 1.f - v1);
+                // Texture coordinates mapped to the face's UV region
+                const float texU = uvMin.x + (float(i) / float(subdivisions)) * (uvMax.x - uvMin.x);
+                const float texV = uvMin.y + (float(j) / float(subdivisions)) * (uvMax.y - uvMin.y);
+                const glm::vec2 texcoord(texU, texV);
 
-                makeTile(tileTopLeft, tileTopRight,
-                         tileBottomLeft, tileBottomRight,
-                         uvTopLeft, uvTopRight,
-                         uvBottomLeft, uvBottomRight);
+
+                // Insert vertex and store index
+                unsigned int idx = insertVertex(pos, normal, texcoord);
+                vertexGrid[i].push_back(idx);
+            }
+        }
+
+        // Build triangles for this face (two triangles per quad)
+        for (int i = 0; i < subdivisions; i++) {
+            for (int j = 0; j < subdivisions; j++) {
+                // Get the four corners of the quad
+                unsigned int bottomLeft = vertexGrid[i][j];
+                unsigned int bottomRight = vertexGrid[i + 1][j];
+                unsigned int topLeft = vertexGrid[i][j + 1];
+                unsigned int topRight = vertexGrid[i + 1][j + 1];
+
+                // Triangle 1: bottom-left, bottom-right, top-right
+                insertIndex(bottomLeft);
+                insertIndex(bottomRight);
+                insertIndex(topRight);
+
+                // Triangle 2: bottom-left, top-right, top-left
+                insertIndex(bottomLeft);
+                insertIndex(topRight);
+                insertIndex(topLeft);
             }
         }
     }
-
-    void Cube::makeTile(glm::vec3 topLeftPos,
-                        glm::vec3 topRightPos,
-                        glm::vec3 bottomLeftPos,
-                        glm::vec3 bottomRightPos,
-                        glm::vec2 uvTopLeft,
-                        glm::vec2 uvTopRight,
-                        glm::vec2 uvBottomLeft,
-                        glm::vec2 uvBottomRight)
-    {
-        glm::vec3 normal1 = glm::normalize(glm::cross(bottomLeftPos - topLeftPos,
-                                                      topRightPos   - topLeftPos));
-        glm::vec3 normal2 = glm::normalize(glm::cross(topLeftPos - topRightPos,
-                                                      bottomRightPos - topRightPos));
-
-        glm::vec3 positions[6] = {
-            topLeftPos,    bottomLeftPos,  bottomRightPos,
-            topRightPos,   topLeftPos,     bottomRightPos
-    };
-
-        glm::vec3 normals[6] = {
-            normal1, normal1, normal1,
-            normal2, normal2, normal2
-    };
-
-        glm::vec2 uvs[6] = {
-            uvTopLeft, uvBottomLeft, uvBottomRight,
-            uvTopRight, uvTopLeft,   uvBottomRight
-    };
-
-        for (int i = 0; i < 6; i++) {
-            insertVec3(m_vertexData, positions[i]);
-            insertVec3(m_vertexData, normals[i]);
-            insertVec2(m_vertexData, uvs[i]);
-        }
-
-        appendVertexData(positions[0], positions[1], positions[2]);
-        appendVertexData(positions[3], positions[4], positions[5]);
-    }
-
-    void Cube::insertVec3(std::vector<float> &data, glm::vec3 v) {
-        data.push_back(v.x);
-        data.push_back(v.y);
-        data.push_back(v.z);
-    }
-
-    void Cube::insertVec2(std::vector<float> &data, glm::vec2 v) {
-        data.push_back(v.x);
-        data.push_back(v.y);
-    }
-
-    void Cube::appendVertexData(glm::vec3 x, glm::vec3 y, glm::vec3 z) {
-        vertcies.push_back(x);
-        vertcies.push_back(y);
-        vertcies.push_back(z);
-    }
-
-    std::vector<glm::vec3> Cube::getVertexData() {
-        return vertcies;
-    }
 }
+

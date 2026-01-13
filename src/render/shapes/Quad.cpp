@@ -1,149 +1,61 @@
 #include "Quad.h"
 
-Quad::Quad(float width, float height)
-        : m_width(width), m_height(height) {
-    setVertexData();
+namespace gl {
+    Quad::Quad(int subdivisions) {
+        param_1 = std::max(1, subdivisions);
+        param_2 = std::max(1, subdivisions);
+        Quad::makeShape();
+    }
+
+    void Quad::makeShape() {
+        const int subdivisions = param_1;
+        const float halfSize = size / 2.0f;
+        const float step = size / float(subdivisions);
+
+        // Normal pointing up (+Y)
+        const glm::vec3 normal(0.0f, 1.0f, 0.0f);
+
+        // Create a grid of vertices on the XZ plane (Y = 0)
+        std::vector<std::vector<unsigned int>> vertexGrid(subdivisions + 1);
+
+        for (int i = 0; i <= subdivisions; i++) {
+            vertexGrid[i].reserve(subdivisions + 1);
+            for (int j = 0; j <= subdivisions; j++) {
+                // Position on XZ plane, centered at origin
+                const float x = -halfSize + float(i) * step;
+                const float z = -halfSize + float(j) * step;
+                const glm::vec3 position(x, 0.0f, z);
+
+                // UV coordinates (0 to 1)
+                const float u = float(i) / float(subdivisions);
+                const float v = float(j) / float(subdivisions);
+                const glm::vec2 texcoord(u, v);
+
+                unsigned int idx = insertVertex(position, normal, texcoord);
+                vertexGrid[i].push_back(idx);
+            }
+        }
+
+        // Build triangles (two triangles per quad)
+        for (int i = 0; i < subdivisions; i++) {
+            for (int j = 0; j < subdivisions; j++) {
+                // Get the four corners of the quad
+                unsigned int bottomLeft = vertexGrid[i][j];
+                unsigned int bottomRight = vertexGrid[i + 1][j];
+                unsigned int topLeft = vertexGrid[i][j + 1];
+                unsigned int topRight = vertexGrid[i + 1][j + 1];
+
+                // Triangle 1: bottom-left, top-right, bottom-right (counter-clockwise from above)
+                insertIndex(bottomLeft);
+                insertIndex(topRight);
+                insertIndex(bottomRight);
+
+                // Triangle 2: bottom-left, top-left, top-right (counter-clockwise from above)
+                insertIndex(bottomLeft);
+                insertIndex(topLeft);
+                insertIndex(topRight);
+            }
+        }
+    }
 }
 
-std::vector<float> Quad::updateParams(float width, float height) {
-    m_vertexData.clear();
-    m_positions.clear();
-    m_normals.clear();
-    m_textureCoords.clear();
-
-    m_width = width;
-    m_height = height;
-
-    setVertexData();
-    return m_vertexData;
-}
-
-std::vector<glm::vec3> Quad::getVertexData() {
-    return m_positions;
-}
-
-std::vector<glm::vec3> Quad::getNormals() const {
-    return m_normals;
-}
-
-std::vector<glm::vec2> Quad::getTexCoords() const {
-    return m_textureCoords;
-}
-
-std::vector<float> Quad::createQuad(glm::vec3 position, float width, float height) {
-    float halfWidth = width / 2.0f;
-    float halfHeight = height / 2.0f;
-
-    std::vector<float> data;
-
-    glm::vec3 topLeft     = position + glm::vec3(-halfWidth,  0.0f, -halfHeight);
-    glm::vec3 bottomLeft  = position + glm::vec3(-halfWidth,  0.0f,  halfHeight);
-    glm::vec3 bottomRight = position + glm::vec3( halfWidth,  0.0f,  halfHeight);
-    glm::vec3 topRight    = position + glm::vec3( halfWidth,  0.0f, -halfHeight);
-
-    glm::vec3 normal = glm::vec3(0.0f, 1.0f, 0.0f);
-
-    glm::vec2 texTopLeft     = glm::vec2(0.0f, 1.0f);
-    glm::vec2 texBottomLeft  = glm::vec2(0.0f, 0.0f);
-    glm::vec2 texBottomRight = glm::vec2(1.0f, 0.0f);
-    glm::vec2 texTopRight    = glm::vec2(1.0f, 1.0f);
-
-    insertData(data,topLeft, normal, texTopLeft);
-    insertData(data,bottomLeft, normal, texBottomLeft);
-    insertData(data,bottomRight, normal, texBottomRight);
-
-    insertData(data,bottomRight, normal, texBottomRight);
-    insertData(data,topRight, normal, texTopRight);
-    insertData(data,topLeft, normal, texTopLeft);
-
-    return data;
-}
-
-std::vector<float> Quad::createUpsideDownQuad(glm::vec3 position, float width, float height) {
-    float halfWidth = width / 2.0f;
-    float halfHeight = height / 2.0f;
-
-    std::vector<float> data;
-
-    glm::vec3 topLeft     = position + glm::vec3(-halfWidth,  0.0f, -halfHeight);
-    glm::vec3 bottomLeft  = position + glm::vec3(-halfWidth,  0.0f,  halfHeight);
-    glm::vec3 bottomRight = position + glm::vec3( halfWidth,  0.0f,  halfHeight);
-    glm::vec3 topRight    = position + glm::vec3( halfWidth,  0.0f, -halfHeight);
-
-    glm::vec3 normal = glm::vec3(0.0f, -1.0f, 0.0f);
-
-    glm::vec2 texTopLeft     = glm::vec2(0.0f, 1.0f);
-    glm::vec2 texBottomLeft  = glm::vec2(0.0f, 0.0f);
-    glm::vec2 texBottomRight = glm::vec2(1.0f, 0.0f);
-    glm::vec2 texTopRight    = glm::vec2(1.0f, 1.0f);
-
-    insertData(data,bottomLeft, normal, texBottomLeft);
-    insertData(data,topLeft, normal, texTopLeft);
-    insertData(data,bottomRight, normal, texBottomRight);
-
-    insertData(data,bottomRight, normal, texBottomRight);
-    insertData(data,topLeft, normal, texTopLeft);
-    insertData(data,topRight, normal, texTopRight);
-
-
-    return data;
-}
-
-void Quad::insertData(std::vector<float> &data, const glm::vec3 &position, const glm::vec3 &normal,
-                      const glm::vec2 &texCoord) {
-    insertVec3(data, position);
-    // Normal
-    insertVec3(data, normal);
-    // Texture Coordinate
-    insertVec2(data, texCoord);
-}
-
-void Quad::setVertexData() {
-    float halfWidth = m_width / 2.0f;
-    float halfHeight = m_height / 2.0f;
-
-    glm::vec3 topLeft     = glm::vec3(-halfWidth,  0.0f, -halfHeight);
-    glm::vec3 bottomLeft  = glm::vec3(-halfWidth,  0.0f,  halfHeight);
-    glm::vec3 bottomRight = glm::vec3( halfWidth,  0.0f,  halfHeight);
-    glm::vec3 topRight    = glm::vec3( halfWidth,  0.0f, -halfHeight);
-
-    glm::vec3 normal = glm::vec3(0.0f, 1.0f, 0.0f);
-
-    glm::vec2 texTopLeft     = glm::vec2(0.0f, 1.0f);
-    glm::vec2 texBottomLeft  = glm::vec2(0.0f, 0.0f);
-    glm::vec2 texBottomRight = glm::vec2(1.0f, 0.0f);
-    glm::vec2 texTopRight    = glm::vec2(1.0f, 1.0f);
-
-    appendVertexData(topLeft, normal, texTopLeft);
-    appendVertexData(bottomLeft, normal, texBottomLeft);
-    appendVertexData(bottomRight, normal, texBottomRight);
-
-    appendVertexData(bottomRight, normal, texBottomRight);
-    appendVertexData(topRight, normal, texTopRight);
-    appendVertexData(topLeft, normal, texTopLeft);
-}
-
-void Quad::appendVertexData(const glm::vec3 &position, const glm::vec3 &normal, const glm::vec2 &texCoord) {
-    // Position
-    insertVec3(m_vertexData, position);
-    m_positions.push_back(position);
-
-    // Normal
-    insertVec3(m_vertexData, normal);
-    m_normals.push_back(normal);
-
-    // Texture Coordinate
-    insertVec2(m_vertexData, texCoord);
-    m_textureCoords.push_back(texCoord);
-}
-
-void Quad::insertVec3(std::vector<float> &data, const glm::vec3 &v) {
-    data.push_back(v.x);
-    data.push_back(v.y);
-    data.push_back(v.z);
-}
-
-void Quad::insertVec2(std::vector<float> &data, const glm::vec2 &v) {
-    data.push_back(v.x);
-    data.push_back(v.y);
-}

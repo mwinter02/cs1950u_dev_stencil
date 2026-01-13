@@ -1,154 +1,140 @@
 #include "Cylinder.h"
-#include <algorithm>
-#include <cmath>
-#include <glm/gtc/constants.hpp>
 
-static glm::vec2 uvForCap(const glm::vec3 &p)
-{
-    float u = p.x + 0.5f;
-    float v = p.z + 0.5f;
-    return glm::vec2(u, v);
-}
+namespace gl {
+    Cylinder::Cylinder(int radial_subdivisions, int height_subdivisions) {
+        param_1 = std::max(1, height_subdivisions);    // Height subdivisions
+        param_2 = std::max(3, radial_subdivisions);    // Radial subdivisions
+        Cylinder::makeShape();
+    }
 
-static glm::vec2 uvForSide(float theta, float y)
-{
-    float twoPi = 2.f * glm::pi<float>();
-    float u = theta / twoPi;
-    float v = (y + 0.5f) / 1.f;
-    return glm::vec2(u, v);
-}
+    void Cylinder::makeShape() {
+        const int numRadialSegments = std::max(3, param_2);
+        const int numHeightDivisions = std::max(1, param_1);
+        const float thetaStep = glm::radians(360.f / float(numRadialSegments));
 
-std::vector<float> Cylinder::updateParams(int param1, int param2) {
-    m_vertexData.clear();
-    vertcies.clear();
-    m_param1 = param1;
-    m_param2 = param2;
-    setVertexData();
-    return m_vertexData;
-}
+        // Create vertex rings: (numRadialSegments + 1) columns for wrapping × (numHeightDivisions + 1) rows
+        std::vector<std::vector<unsigned int>> vertexRings(numHeightDivisions + 1);
 
-void Cylinder::makeWedge(float curT, float nexT) {
-    m_r = 0.5f;
-    m_h = 0.5f;
+        // Generate vertices for each horizontal ring
+        for (int h = 0; h <= numHeightDivisions; h++) {
+            const float t = float(h) / float(numHeightDivisions);
+            const float y = -height / 2.f + height * t;
 
-    int numDivisions = std::max(1, m_param1);
+            // Create ring with extra column for seamless wrapping
+            std::vector<unsigned int> ring;
+            ring.reserve(numRadialSegments + 1);
 
-    for (int i = 0; i < numDivisions; i++)
-    {
-        float y0 = -m_h + (i     / float(numDivisions)) * (2.f * m_h);
-        float y1 = -m_h + ((i+1) / float(numDivisions)) * (2.f * m_h);
+            unsigned int firstVertexIdx = 0;  // Store first vertex index for wrapping
 
-        float r0 = i     / float(numDivisions);
-        float r1 = (i+1) / float(numDivisions);
+            for (int seg = 0; seg <= numRadialSegments; seg++) {
+                if (seg < numRadialSegments) {
+                    const float theta = float(seg) * thetaStep;
+                    unsigned int vertexIdx = createRingVertices(y, theta, h, numHeightDivisions)[0];
+                    ring.push_back(vertexIdx);
 
-        glm::vec3 t0(m_r * r0 * sin(curT),  m_h, m_r * r0 * cos(curT));
-        glm::vec3 t1(m_r * r0 * sin(nexT),  m_h, m_r * r0 * cos(nexT));
-        glm::vec3 t2(m_r * r1 * sin(curT),  m_h, m_r * r1 * cos(curT));
-        glm::vec3 t3(m_r * r1 * sin(nexT),  m_h, m_r * r1 * cos(nexT));
+                    if (seg == 0) {
+                        firstVertexIdx = vertexIdx;  // Save first vertex for wrapping
+                    }
+                } else {
+                    // Last column wraps to first vertex for seamless texture
+                    ring.push_back(firstVertexIdx);
+                }
+            }
 
-        glm::vec3 nTop(0.f, 1.f, 0.f); // Normal pointing upwards
+            vertexRings[h] = ring;
+        }
 
-        glm::vec2 uvT0 = uvForCap(t0);
-        glm::vec2 uvT1 = uvForCap(t1);
-        glm::vec2 uvT2 = uvForCap(t2);
-        glm::vec2 uvT3 = uvForCap(t3);
+        // Build triangles for cylinder side
+        for (int h = 0; h < numHeightDivisions; h++) {
+            makeSegment(vertexRings[h], vertexRings[h + 1]);
+        }
 
-        // Ensure counter-clockwise order for top cap
-        insertVec3(m_vertexData, t0); insertVec3(m_vertexData, nTop); insertVec2(m_vertexData, uvT0);
-        insertVec3(m_vertexData, t2); insertVec3(m_vertexData, nTop); insertVec2(m_vertexData, uvT2);
-        insertVec3(m_vertexData, t1); insertVec3(m_vertexData, nTop); insertVec2(m_vertexData, uvT1);
-        appendVertexData(t0, t2, t1);
+        // Build top and bottom caps
+        makeCap(-height / 2.f, glm::vec3(0, -1, 0), false);  // Bottom cap
+        makeCap(height / 2.f, glm::vec3(0, 1, 0), true);     // Top cap
+    }
 
-        insertVec3(m_vertexData, t1); insertVec3(m_vertexData, nTop); insertVec2(m_vertexData, uvT1);
-        insertVec3(m_vertexData, t2); insertVec3(m_vertexData, nTop); insertVec2(m_vertexData, uvT2);
-        insertVec3(m_vertexData, t3); insertVec3(m_vertexData, nTop); insertVec2(m_vertexData, uvT3);
-        appendVertexData(t1, t2, t3);
+    std::vector<unsigned int> Cylinder::createRingVertices(float y, float theta, int heightIndex, int totalHeightDivisions) {
+        const float sinTheta = std::sin(theta);
+        const float cosTheta = std::cos(theta);
 
-        glm::vec3 b0(m_r * r0 * sin(curT), -m_h, m_r * r0 * cos(curT));
-        glm::vec3 b1(m_r * r0 * sin(nexT), -m_h, m_r * r0 * cos(nexT));
-        glm::vec3 b2(m_r * r1 * sin(curT), -m_h, m_r * r1 * cos(curT));
-        glm::vec3 b3(m_r * r1 * sin(nexT), -m_h, m_r * r1 * cos(nexT));
+        // Cylinder side normal points radially outward (horizontal)
+        const glm::vec3 normal = glm::normalize(glm::vec3(cosTheta, 0.f, sinTheta));
 
-        glm::vec3 nBot(0.f, -1.f, 0.f); // Normal pointing downwards
+        // Position on cylinder surface
+        const glm::vec3 pos(radius * cosTheta, y, radius * sinTheta);
 
-        glm::vec2 uvB0 = uvForCap(b2);
-        glm::vec2 uvB1 = uvForCap(b0);
-        glm::vec2 uvB2 = uvForCap(b3);
-        glm::vec2 uvB3 = uvForCap(b1);
+        // UV coordinates (standard cylinder unwrap)
+        const float u = theta / (2.0f * 3.14159265359f);  // Wrap around circumference (0 to 1)
+        const float v = float(heightIndex) / float(totalHeightDivisions);  // Height (0 to 1)
+        const glm::vec2 texcoord(u, v);
 
-        insertVec3(m_vertexData, b2); insertVec3(m_vertexData, nBot); insertVec2(m_vertexData, uvB0);
-        insertVec3(m_vertexData, b0); insertVec3(m_vertexData, nBot); insertVec2(m_vertexData, uvB1);
-        insertVec3(m_vertexData, b3); insertVec3(m_vertexData, nBot); insertVec2(m_vertexData, uvB2);
-        appendVertexData(b2, b0, b3);
+        std::vector<unsigned int> indices;
+        indices.push_back(insertVertex(pos, normal, texcoord));
+        return indices;
+    }
 
-        // Triangle #2: (b3, b0, b1)
-        insertVec3(m_vertexData, b3); insertVec3(m_vertexData, nBot); insertVec2(m_vertexData, uvB2);
-        insertVec3(m_vertexData, b0); insertVec3(m_vertexData, nBot); insertVec2(m_vertexData, uvB1);
-        insertVec3(m_vertexData, b1); insertVec3(m_vertexData, nBot); insertVec2(m_vertexData, uvB3);
-        appendVertexData(b3, b0, b1);
+    void Cylinder::makeSegment(const std::vector<unsigned int>& bottomRing,
+                                const std::vector<unsigned int>& topRing) {
+        const int numSegments = bottomRing.size() - 1;  // -1 because last vertex is duplicate of first
 
-        glm::vec3 s0(m_r * sin(curT),  y0, m_r * cos(curT));
-        glm::vec3 s1(m_r * sin(nexT),  y0, m_r * cos(nexT));
-        glm::vec3 s2(m_r * sin(nexT),  y1, m_r * cos(nexT));
-        glm::vec3 s3(m_r * sin(curT),  y1, m_r * cos(curT));
+        for (int seg = 0; seg < numSegments; seg++) {
+            const unsigned int bottomLeft = bottomRing[seg];
+            const unsigned int bottomRight = bottomRing[seg + 1];
+            const unsigned int topLeft = topRing[seg];
+            const unsigned int topRight = topRing[seg + 1];
 
-        glm::vec3 n0 = glm::normalize(glm::vec3(sin(curT),  0.f, cos(curT)));
-        glm::vec3 n1 = glm::normalize(glm::vec3(sin(nexT), 0.f, cos(nexT)));
-        glm::vec3 n2 = n1;
-        glm::vec3 n3 = n0;
+            // Quad split into two triangles (counter-clockwise winding)
+            // Triangle 1: bottom-left, top-left, top-right
+            insertIndex(bottomLeft);
+            insertIndex(topLeft);
+            insertIndex(topRight);
 
-        glm::vec2 uvS0 = uvForSide(curT,  y0);
-        glm::vec2 uvS1 = uvForSide(nexT,  y0);
-        glm::vec2 uvS2 = uvForSide(nexT,  y1);
-        glm::vec2 uvS3 = uvForSide(curT,  y1);
+            // Triangle 2: bottom-left, top-right, bottom-right
+            insertIndex(bottomLeft);
+            insertIndex(topRight);
+            insertIndex(bottomRight);
+        }
+    }
 
-        insertVec3(m_vertexData, s0); insertVec3(m_vertexData, n0); insertVec2(m_vertexData, uvS0);
-        insertVec3(m_vertexData, s1); insertVec3(m_vertexData, n1); insertVec2(m_vertexData, uvS1);
-        insertVec3(m_vertexData, s3); insertVec3(m_vertexData, n3); insertVec2(m_vertexData, uvS3);
-        appendVertexData(s0, s1, s3);
+    void Cylinder::makeCap(float y, const glm::vec3& normal, bool isTop) {
+        const int numRadialSegments = std::max(3, param_2);
+        const float thetaStep = glm::radians(360.f / float(numRadialSegments));
 
-        insertVec3(m_vertexData, s1); insertVec3(m_vertexData, n1); insertVec2(m_vertexData, uvS1);
-        insertVec3(m_vertexData, s2); insertVec3(m_vertexData, n2); insertVec2(m_vertexData, uvS2);
-        insertVec3(m_vertexData, s3); insertVec3(m_vertexData, n3); insertVec2(m_vertexData, uvS3);
-        appendVertexData(s1, s2, s3);
+        // Center vertex of the cap
+        const glm::vec3 center(0.f, y, 0.f);
+        const glm::vec2 centerUV(0.5f, 0.5f);
+        const unsigned int centerIdx = insertVertex(center, normal, centerUV);
+
+        // Create triangular fan for cap
+        for (int seg = 0; seg < numRadialSegments; seg++) {
+            const float currTheta = float(seg) * thetaStep;
+            const float nextTheta = float(seg + 1) * thetaStep;
+
+            // Positions on the rim
+            const glm::vec3 currPos(radius * std::cos(currTheta), y, radius * std::sin(currTheta));
+            const glm::vec3 nextPos(radius * std::cos(nextTheta), y, radius * std::sin(nextTheta));
+
+            // UV coordinates (circular mapping)
+            const glm::vec2 currUV(0.5f + 0.5f * std::cos(currTheta), 0.5f + 0.5f * std::sin(currTheta));
+            const glm::vec2 nextUV(0.5f + 0.5f * std::cos(nextTheta), 0.5f + 0.5f * std::sin(nextTheta));
+
+            const unsigned int currIdx = insertVertex(currPos, normal, currUV);
+            const unsigned int nextIdx = insertVertex(nextPos, normal, nextUV);
+
+            // Triangle winding depends on which cap (top vs bottom)
+            if (isTop) {
+                // Top cap: counter-clockwise from above (looking down)
+                insertIndex(centerIdx);
+                insertIndex(nextIdx);
+                insertIndex(currIdx);
+            } else {
+                // Bottom cap: counter-clockwise from below (looking up)
+                insertIndex(centerIdx);
+                insertIndex(currIdx);
+                insertIndex(nextIdx);
+            }
+        }
     }
 }
 
-void Cylinder::makeCylinder()
-{
-    int numDivisions = std::max(3, m_param2);
-    float thetaStep = glm::radians(360.f / numDivisions);
-
-    for (int i = 0; i < numDivisions; i++) {
-        float currentTheta = i       * thetaStep;
-        float nextTheta    = (i + 1) * thetaStep;
-        makeWedge(currentTheta, nextTheta);
-    }
-}
-
-void Cylinder::setVertexData() {
-    m_vertexData.clear();
-    vertcies.clear();
-    makeCylinder();
-}
-
-std::vector<glm::vec3> Cylinder::getVertexData() {
-    return vertcies;
-}
-
-void Cylinder::insertVec3(std::vector<float> &data, glm::vec3 v) {
-    data.push_back(v.x);
-    data.push_back(v.y);
-    data.push_back(v.z);
-}
-
-void Cylinder::insertVec2(std::vector<float> &data, glm::vec2 v) {
-    data.push_back(v.x);
-    data.push_back(v.y);
-}
-
-void Cylinder::appendVertexData(glm::vec3 x, glm::vec3 y, glm::vec3 z) {
-    vertcies.push_back(x);
-    vertcies.push_back(y);
-    vertcies.push_back(z);
-}
