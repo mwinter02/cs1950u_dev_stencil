@@ -75,7 +75,11 @@ namespace gl {
         else if (channels == 2) format = GL_RG;
         else if (channels == 4) format = GL_RGBA;
 
+        // Set pixel alignment to 1 byte to handle textures with non-4-byte-aligned rows
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, image);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4); // Restore default alignment
+
         glBindTexture(GL_TEXTURE_2D, 0);
         stbi_image_free(image);
 
@@ -121,7 +125,11 @@ namespace gl {
         glBindTexture(GL_TEXTURE_2D, texture_id);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        // Set pixel alignment to 1 byte to handle textures with non-4-byte-aligned rows
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, 0, format, GL_UNSIGNED_BYTE, image);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4); // Restore default alignment
 
         glBindTexture(GL_TEXTURE_2D, 0); // Unbind texture
         stbi_image_free(image); // Free image memory

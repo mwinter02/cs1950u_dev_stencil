@@ -40,7 +40,7 @@ namespace gl {
         .ambient = glm::vec3(1.f, 0.f, 1.f),
         .diffuse = glm::vec3(0.8f, 0.0f, 0.8f),
         .specular = glm::vec3(1.0f, 0.5f, 1.0f),
-        .shininess = 32.0f,
+        .shininess = 100.0f,
         .opacity = 1.0f,
         .textures = {}
     };
